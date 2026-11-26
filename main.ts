@@ -41,4 +41,35 @@ if (!writtenBytes.equals(sourceBytes)) {
     `output bytes mismatch: ${writtenBytes.length} bytes written vs ${sourceBytes.length} in entry.png`,
   );
 }
-console.log(`wrote ${target} (${writtenBytes.length} bytes)`);
+
+// PNG magic bytes (89 50 4E 47 0D 0A 1A 0A) must be present in the
+// written file, otherwise the output is not a PNG at all.
+const PNG_SIGNATURE = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+if (
+  writtenBytes.length < PNG_SIGNATURE.length ||
+  !writtenBytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+) {
+  throw new Error("output is missing the PNG signature");
+}
+
+// IHDR is the first chunk: length(4) + type(4) + width(4) + height(4).
+// Verify the image dimensions stay within the 1024x1024 competition cap.
+if (writtenBytes.length < 24 || writtenBytes.toString("ascii", 12, 16) !== "IHDR") {
+  throw new Error("output is missing a valid IHDR chunk");
+}
+const width = writtenBytes.readUInt32BE(16);
+const height = writtenBytes.readUInt32BE(20);
+if (width === 0 || height === 0 || width > 1024 || height > 1024) {
+  throw new Error(`output dimensions ${width}x${height} exceed 1024x1024`);
+}
+
+// Determinism check: a second independent copy must be byte-identical
+// to the first, so the result does not depend on filesystem quirks.
+const target2 = join(outDir, "entry-check.png");
+writeFileSync(target2, sourceBytes);
+const writtenBytes2 = readFileSync(target2);
+if (!writtenBytes2.equals(writtenBytes)) {
+  throw new Error("second copy differs from first copy; output is not deterministic");
+}
+
+console.log(`wrote ${target} (${writtenBytes.length} bytes, ${width}x${height})`);
